@@ -94,6 +94,19 @@ export async function POST(request) {
       )
     `;
 
+    await sql`
+      CREATE TABLE IF NOT EXISTS rubrics (
+        id SERIAL PRIMARY KEY,
+        program VARCHAR(50) NOT NULL,
+        criterion_key VARCHAR(30) NOT NULL,
+        label VARCHAR(100) NOT NULL,
+        description TEXT DEFAULT '',
+        sort_order INTEGER DEFAULT 0,
+        active BOOLEAN DEFAULT true,
+        UNIQUE(program, criterion_key)
+      )
+    `;
+
     // Create or update default admin user
     const adminHash = await bcrypt.hash('rawson2026', 10);
     await sql`
@@ -141,6 +154,33 @@ export async function POST(request) {
           `;
         }
       }
+    }
+
+    // Seed default rubrics
+    const defaultRubrics = [
+      { program:'G-Compris', key:'nav', label:'Navegación en la interfaz', desc:'Puede abrir actividades, seleccionar niveles y volver al menú principal sin ayuda.', order:1 },
+      { program:'G-Compris', key:'mouse', label:'Manejo del mouse/touchpad', desc:'Usa click, doble click y arrastrar con precisión en las actividades.', order:2 },
+      { program:'G-Compris', key:'letras', label:'Reconocimiento de letras', desc:'Identifica y asocia letras en actividades de lectura.', order:3 },
+      { program:'G-Compris', key:'palabras', label:'Formación de palabras', desc:'Completa palabras y las asocia con imágenes.', order:4 },
+      { program:'G-Compris', key:'numeros', label:'Reconocimiento de números', desc:'Identifica números y realiza conteo en actividades de aritmética.', order:5 },
+      { program:'G-Compris', key:'operaciones', label:'Operaciones básicas', desc:'Resuelve sumas y restas simples dentro del programa.', order:6 },
+      { program:'G-Compris', key:'logica', label:'Juegos de lógica', desc:'Resuelve puzzles, memoria y actividades de razonamiento.', order:7 },
+      { program:'G-Compris', key:'autonomia', label:'Autonomía de uso', desc:'Trabaja con el programa de forma independiente durante la sesión.', order:8 },
+      { program:'Propuesta DALE!', key:'nivel', label:'Nivel de escritura inicial', desc:'Nivel detectado en diagnóstico DALE (1: presilábico, 2: silábico, 3: alfabético).', order:1 },
+      { program:'Propuesta DALE!', key:'letras_d', label:'Reconocimiento de letras', desc:'Identifica letras del abecedario de forma visual y auditiva.', order:2 },
+      { program:'Propuesta DALE!', key:'silabas', label:'Formación de sílabas', desc:'Puede combinar consonantes y vocales para formar sílabas.', order:3 },
+      { program:'Propuesta DALE!', key:'lectura_pal', label:'Lectura de palabras', desc:'Lee palabras simples y frecuentes de forma autónoma.', order:4 },
+      { program:'Propuesta DALE!', key:'escritura_pal', label:'Escritura de palabras', desc:'Escribe palabras simples dictadas o a partir de imágenes.', order:5 },
+      { program:'Propuesta DALE!', key:'comprension', label:'Comprensión de consignas', desc:'Entiende las instrucciones del videojuego/cuadernillo sin ayuda.', order:6 },
+      { program:'Propuesta DALE!', key:'progreso_nivel', label:'Progreso entre niveles', desc:'Avanza de un nivel a otro dentro del programa.', order:7 },
+      { program:'Propuesta DALE!', key:'motivacion', label:'Motivación y compromiso', desc:'Muestra interés, participa activamente y pide continuar.', order:8 },
+    ];
+    for (const r of defaultRubrics) {
+      await sql`
+        INSERT INTO rubrics (program, criterion_key, label, description, sort_order)
+        VALUES (${r.program}, ${r.key}, ${r.label}, ${r.desc}, ${r.order})
+        ON CONFLICT (program, criterion_key) DO NOTHING
+      `;
     }
 
     return NextResponse.json({

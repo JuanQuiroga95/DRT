@@ -16,28 +16,6 @@ const AIE_CATEGORIES = {
   'Manejo de teclado': ['_level'],
 };
 
-const RUBRIC_GCOMPRIS = [
-  { id:'nav', label:'Navegación en la interfaz', desc:'Puede abrir actividades, seleccionar niveles y volver al menú principal sin ayuda.' },
-  { id:'mouse', label:'Manejo del mouse/touchpad', desc:'Usa click, doble click y arrastrar con precisión en las actividades.' },
-  { id:'letras', label:'Reconocimiento de letras', desc:'Identifica y asocia letras en actividades de lectura.' },
-  { id:'palabras', label:'Formación de palabras', desc:'Completa palabras y las asocia con imágenes.' },
-  { id:'numeros', label:'Reconocimiento de números', desc:'Identifica números y realiza conteo en actividades de aritmética.' },
-  { id:'operaciones', label:'Operaciones básicas', desc:'Resuelve sumas y restas simples dentro del programa.' },
-  { id:'logica', label:'Juegos de lógica', desc:'Resuelve puzzles, memoria y actividades de razonamiento.' },
-  { id:'autonomia', label:'Autonomía de uso', desc:'Trabaja con el programa de forma independiente durante la sesión.' },
-];
-
-const RUBRIC_DALE = [
-  { id:'nivel', label:'Nivel de escritura inicial', desc:'Nivel detectado en diagnóstico DALE (1: presilábico, 2: silábico, 3: alfabético).' },
-  { id:'letras_d', label:'Reconocimiento de letras', desc:'Identifica letras del abecedario de forma visual y auditiva.' },
-  { id:'silabas', label:'Formación de sílabas', desc:'Puede combinar consonantes y vocales para formar sílabas.' },
-  { id:'lectura_pal', label:'Lectura de palabras', desc:'Lee palabras simples y frecuentes de forma autónoma.' },
-  { id:'escritura_pal', label:'Escritura de palabras', desc:'Escribe palabras simples dictadas o a partir de imágenes.' },
-  { id:'comprension', label:'Comprensión de consignas', desc:'Entiende las instrucciones del videojuego/cuadernillo sin ayuda.' },
-  { id:'progreso_nivel', label:'Progreso entre niveles', desc:'Avanza de un nivel a otro dentro del programa.' },
-  { id:'motivacion', label:'Motivación y compromiso', desc:'Muestra interés, participa activamente y pide continuar.' },
-];
-
 const STAFF = [
   { name:'Pamela Pastrán', role:'DRT', shift:'Mañana' },
   { name:'Julieta Pezantes', role:'DRT', shift:'Tarde' },
@@ -46,7 +24,6 @@ const STAFF = [
   { name:'Juan Quiroga', role:'AIE', shift:'Tarde' },
 ];
 
-// ── Palette ──
 const P = {
   bg:'#f0f4f8', card:'#ffffff', primary:'#1a5276', primaryLight:'#2980b9',
   accent:'#27ae60', accentWarm:'#e67e22', danger:'#c0392b',
@@ -57,18 +34,21 @@ const P = {
 
 const todayStr = () => new Date().toISOString().slice(0,10);
 
-// ── API helper ──
 async function api(path, opts = {}) {
   const res = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
-  if (res.status === 401) {
-    window.location.href = '/';
-    return null;
-  }
+  if (res.status === 401) { window.location.href = '/'; return null; }
   return res.json();
+}
+
+// ── PDF loader (dynamic import to avoid SSR issues) ──
+let pdfLib = null;
+async function getPDF() {
+  if (!pdfLib) pdfLib = await import('@/lib/pdf');
+  return pdfLib;
 }
 
 // ── Shared components ──
@@ -90,14 +70,13 @@ function Card({ title, icon, children, actions, style: extra }) {
 
 function Btn({ children, onClick, variant = 'primary', small, disabled, style: extra }) {
   const bgMap = { primary: P.primary, accent: P.accent, danger: P.danger, warn: P.accentWarm, ghost: '#ecf0f1' };
-  const bg = disabled ? '#bdc3c7' : (bgMap[variant] || '#ecf0f1');
-  const fg = variant === 'ghost' ? P.text : '#fff';
   return (
     <button onClick={onClick} disabled={disabled} style={{
-      background: bg, color: fg, border: 'none', borderRadius: 8,
+      background: disabled ? '#bdc3c7' : (bgMap[variant] || '#ecf0f1'),
+      color: variant === 'ghost' ? P.text : '#fff', border: 'none', borderRadius: 8,
       padding: small ? '6px 12px' : '10px 18px', fontSize: small ? 12 : 14,
       fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer',
-      transition: 'all .15s', display: 'inline-flex', alignItems: 'center', gap: 6, ...extra,
+      display: 'inline-flex', alignItems: 'center', gap: 6, ...extra,
     }}>{children}</button>
   );
 }
@@ -123,6 +102,10 @@ function Select({ label, options, ...props }) {
   );
 }
 
+function PdfBtn({ onClick, label }) {
+  return <Btn variant="danger" small onClick={onClick} style={{ background: '#c0392b' }}>📄 {label || 'Exportar PDF'}</Btn>;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━ MAIN APP ━━━━━━━━━━━━━━━━━━━━━
 export default function DashboardPage() {
   const router = useRouter();
@@ -131,30 +114,27 @@ export default function DashboardPage() {
   const [scheduleData, setScheduleData] = useState({});
   const [aieData, setAieData] = useState({});
   const [evals, setEvals] = useState([]);
+  const [rubrics, setRubrics] = useState([]);
   const [attendanceMap, setAttendanceMap] = useState({});
   const [loading, setLoading] = useState(true);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
-    const [stu, sch, aie, ev] = await Promise.all([
-      api('/api/students'),
-      api('/api/schedule'),
-      api('/api/aie'),
-      api('/api/evaluations'),
+    const [stu, sch, aie, ev, rub] = await Promise.all([
+      api('/api/students'), api('/api/schedule'), api('/api/aie'),
+      api('/api/evaluations'), api('/api/rubrics'),
     ]);
     if (stu) setStudents(stu);
     if (sch) setScheduleData(sch.structured || {});
     if (aie) setAieData(aie.map || {});
     if (ev) setEvals(ev);
+    if (rub) setRubrics(rub);
     setLoading(false);
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const handleLogout = () => {
-    document.cookie = 'drt-session=; Path=/; Max-Age=0';
-    router.push('/');
-  };
+  const handleLogout = () => { document.cookie = 'drt-session=; Path=/; Max-Age=0'; router.push('/'); };
 
   const tabs = [
     { id: 'dashboard', icon: '📊', label: 'Inicio' },
@@ -183,23 +163,16 @@ export default function DashboardPage() {
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Esc. N°1-004 "Dr. Guillermo Rawson"</h1>
           <p style={{ margin: 0, fontSize: 12, opacity: 0.85 }}>Sistema DRT / AIE — Lengua y Matemática con TIC — 2026</p>
         </div>
-        <Btn variant="ghost" small onClick={handleLogout} style={{ color: '#fff', background: 'rgba(255,255,255,.15)' }}>
-          🚪 Salir
-        </Btn>
+        <Btn variant="ghost" small onClick={handleLogout} style={{ color: '#fff', background: 'rgba(255,255,255,.15)' }}>🚪 Salir</Btn>
       </header>
 
       <nav style={{ display: 'flex', gap: 2, padding: '0 8px', background: '#fff', borderBottom: `2px solid ${P.border}`, overflowX: 'auto' }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding: '12px 14px', border: 'none',
-            background: tab === t.id ? P.primary : 'transparent',
-            color: tab === t.id ? '#fff' : P.textLight,
-            cursor: 'pointer', fontSize: 13, fontWeight: 600,
-            borderRadius: '8px 8px 0 0', whiteSpace: 'nowrap',
-            display: 'flex', alignItems: 'center', gap: 5,
-          }}>
-            <span>{t.icon}</span>{t.label}
-          </button>
+            padding: '12px 14px', border: 'none', background: tab === t.id ? P.primary : 'transparent',
+            color: tab === t.id ? '#fff' : P.textLight, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            borderRadius: '8px 8px 0 0', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 5,
+          }}><span>{t.icon}</span>{t.label}</button>
         ))}
       </nav>
 
@@ -208,8 +181,8 @@ export default function DashboardPage() {
         {tab === 'students' && <StudentsTab students={students} reload={loadAll} />}
         {tab === 'schedule' && <ScheduleTab scheduleData={scheduleData} reload={loadAll} />}
         {tab === 'aie' && <AIETab students={students} aieData={aieData} setAieData={setAieData} />}
-        {tab === 'rubrics' && <RubricsTab />}
-        {tab === 'evals' && <EvalsTab students={students} evals={evals} reload={loadAll} />}
+        {tab === 'rubrics' && <RubricsTab rubrics={rubrics} reload={loadAll} />}
+        {tab === 'evals' && <EvalsTab students={students} evals={evals} rubrics={rubrics} reload={loadAll} />}
         {tab === 'attendance' && <AttendanceTab students={students} attendanceMap={attendanceMap} setAttendanceMap={setAttendanceMap} />}
       </main>
     </div>
@@ -220,7 +193,6 @@ export default function DashboardPage() {
 function DashboardTab({ students, evals, scheduleData }) {
   const dayIdx = new Date().getDay();
   const todayName = DAYS[dayIdx - 1] || null;
-  const byProgram = ['G-Compris', 'Propuesta DALE!'].map(p => ({ name: p, count: evals.filter(e => e.program === p).length }));
 
   return (
     <>
@@ -247,7 +219,6 @@ function DashboardTab({ students, evals, scheduleData }) {
             </div>
           ))}
         </Card>
-
         <Card title={todayName ? `Hoy: ${todayName}` : 'Fin de semana'} icon="📅">
           {todayName && scheduleData ? ['Mañana', 'Tarde'].map(shift => {
             const dayData = scheduleData[shift]?.[todayName];
@@ -259,30 +230,12 @@ function DashboardTab({ students, evals, scheduleData }) {
                   {HOURS.map(h => {
                     const val = dayData[h] || '';
                     const isDIP = val === 'DIP';
-                    return (
-                      <span key={h} style={{ background: isDIP ? '#fef9e7' : '#ebf5fb', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, color: isDIP ? P.accentWarm : P.primary }}>
-                        {h}: {isDIP ? 'Diseño Interv.' : val}
-                      </span>
-                    );
+                    return <span key={h} style={{ background: isDIP ? '#fef9e7' : '#ebf5fb', padding: '4px 10px', borderRadius: 8, fontSize: 12, fontWeight: 600, color: isDIP ? P.accentWarm : P.primary }}>{h}: {isDIP ? 'DIP' : val}</span>;
                   })}
                 </div>
               </div>
             );
           }) : <p style={{ color: P.textLight, textAlign: 'center', padding: 20 }}>No hay actividades hoy.</p>}
-        </Card>
-
-        <Card title="Evaluaciones por programa" icon="📊">
-          {byProgram.map((p, i) => (
-            <div key={i} style={{ marginBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
-                <span style={{ fontWeight: 600 }}>{p.name}</span>
-                <span style={{ color: P.textLight }}>{p.count}</span>
-              </div>
-              <div style={{ background: P.bg, borderRadius: 6, height: 8, overflow: 'hidden' }}>
-                <div style={{ height: '100%', borderRadius: 6, background: P.primaryLight, width: evals.length ? `${(p.count / Math.max(evals.length, 1)) * 100}%` : '0%' }} />
-              </div>
-            </div>
-          ))}
         </Card>
       </div>
     </>
@@ -310,23 +263,15 @@ function StudentsTab({ students, reload }) {
     setSaving(false);
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('¿Eliminar este alumno?')) return;
-    await api(`/api/students?id=${id}`, { method: 'DELETE' });
-    await reload();
-  };
-
-  const filtered = students.filter(s => {
-    const q = search.toLowerCase();
-    return `${s.first_name} ${s.last_name} ${s.grade} ${s.shift}`.toLowerCase().includes(q);
-  });
+  const handleDelete = async (id) => { if (confirm('¿Eliminar este alumno?')) { await api(`/api/students?id=${id}`, { method: 'DELETE' }); await reload(); } };
+  const filtered = students.filter(s => `${s.first_name} ${s.last_name} ${s.grade} ${s.shift}`.toLowerCase().includes(search.toLowerCase()));
 
   return (
     <>
       <Card title={editing ? 'Editar alumno' : 'Agregar alumno'} icon="➕">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 12 }}>
-          <Input label="Nombre" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} placeholder="Ej: Juan" />
-          <Input label="Apellido" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} placeholder="Ej: Pérez" />
+          <Input label="Nombre" value={form.firstName} onChange={e => setForm(f => ({ ...f, firstName: e.target.value }))} />
+          <Input label="Apellido" value={form.lastName} onChange={e => setForm(f => ({ ...f, lastName: e.target.value }))} />
           <Select label="Grado" value={form.grade} onChange={e => setForm(f => ({ ...f, grade: e.target.value }))} options={GRADES} />
           <Select label="Turno" value={form.shift} onChange={e => setForm(f => ({ ...f, shift: e.target.value }))} options={SHIFTS} />
         </div>
@@ -335,22 +280,17 @@ function StudentsTab({ students, reload }) {
           {editing && <Btn variant="ghost" onClick={() => { setEditing(null); setForm({ firstName: '', lastName: '', grade: '', shift: '' }); }}>Cancelar</Btn>}
         </div>
       </Card>
-
       <Card title={`Alumnos (${filtered.length})`} icon="👨‍🎓" actions={
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar..." style={{ padding: '6px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: 13 }} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 Buscar..." style={{ padding: '6px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: 13 }} />
+          <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportStudentsPDF(filtered); }} label="PDF" />
+        </div>
       }>
-        {filtered.length === 0 ? (
-          <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos cargados.</p>
-        ) : (
+        {filtered.length === 0 ? <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos.</p> : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: P.bg }}>
-                <th style={{ padding: 10, textAlign: 'left' }}>#</th>
-                <th style={{ padding: 10, textAlign: 'left' }}>Apellido</th>
-                <th style={{ padding: 10, textAlign: 'left' }}>Nombre</th>
-                <th style={{ padding: 10, textAlign: 'left' }}>Grado</th>
-                <th style={{ padding: 10, textAlign: 'left' }}>Turno</th>
-                <th style={{ padding: 10, textAlign: 'center' }}>Acciones</th>
+                {['#','Apellido','Nombre','Grado','Turno','Acciones'].map(h => <th key={h} style={{ padding: 10, textAlign: h === 'Acciones' ? 'center' : 'left' }}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {filtered.map((s, i) => (
@@ -359,7 +299,7 @@ function StudentsTab({ students, reload }) {
                     <td style={{ padding: 10, fontWeight: 600 }}>{s.last_name}</td>
                     <td style={{ padding: 10 }}>{s.first_name}</td>
                     <td style={{ padding: 10 }}><span style={{ background: '#ebf5fb', padding: '2px 8px', borderRadius: 8, fontSize: 12, fontWeight: 600, color: P.primary }}>{s.grade}</span></td>
-                    <td style={{ padding: 10 }}><span style={{ background: s.shift === 'Mañana' ? '#fef9e7' : '#f5eef8', padding: '2px 8px', borderRadius: 8, fontSize: 12 }}>{s.shift}</span></td>
+                    <td style={{ padding: 10 }}>{s.shift}</td>
                     <td style={{ padding: 10, textAlign: 'center' }}>
                       <button onClick={() => { setEditing(s.id); setForm({ firstName: s.first_name, lastName: s.last_name, grade: s.grade, shift: s.shift }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, marginRight: 8 }}>✏️</button>
                       <button onClick={() => handleDelete(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16 }}>🗑️</button>
@@ -379,21 +319,15 @@ function StudentsTab({ students, reload }) {
 function ScheduleTab({ scheduleData, reload }) {
   const [editShift, setEditShift] = useState('Mañana');
   const schedule = scheduleData[editShift] || {};
-
-  const updateCell = async (day, hour, val) => {
-    await api('/api/schedule', { method: 'PUT', body: { shift: editShift, dayName: day, hourSlot: hour, assignedGroup: val } });
-    await reload();
-  };
+  const updateCell = async (day, hour, val) => { await api('/api/schedule', { method: 'PUT', body: { shift: editShift, dayName: day, hourSlot: hour, assignedGroup: val } }); await reload(); };
 
   return (
     <Card title="Cronograma Semanal" icon="📅" actions={
-      <div style={{ display: 'flex', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         {SHIFTS.map(s => <Btn key={s} variant={editShift === s ? 'primary' : 'ghost'} small onClick={() => setEditShift(s)}>{s}</Btn>)}
+        <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportSchedulePDF(scheduleData); }} label="PDF" />
       </div>
     }>
-      <p style={{ fontSize: 12, color: P.textLight, marginBottom: 12, fontStyle: 'italic' }}>
-        * Sujeta a modificaciones. Editá las celdas directamente.
-      </p>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead><tr style={{ background: P.headerGrad, color: '#fff' }}>
@@ -409,8 +343,7 @@ function ScheduleTab({ scheduleData, reload }) {
                   return (
                     <td key={d} style={{ padding: 6, textAlign: 'center', background: val === 'DIP' ? '#fef9e7' : '#fff' }}>
                       <input defaultValue={val} onBlur={e => { if (e.target.value !== val) updateCell(d, h, e.target.value); }}
-                        style={{ width: '100%', textAlign: 'center', border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 4px', fontSize: 12, fontWeight: 600, color: val === 'DIP' ? P.accentWarm : P.primary, background: 'transparent', boxSizing: 'border-box' }}
-                      />
+                        style={{ width: '100%', textAlign: 'center', border: `1px solid ${P.border}`, borderRadius: 6, padding: '6px 4px', fontSize: 12, fontWeight: 600, color: val === 'DIP' ? P.accentWarm : P.primary, background: 'transparent', boxSizing: 'border-box' }} />
                     </td>
                   );
                 })}
@@ -428,39 +361,34 @@ function AIETab({ students, aieData, setAieData }) {
   const [filterGrade, setFilterGrade] = useState('');
   const [filterShift, setFilterShift] = useState('');
   const filtered = students.filter(s => (!filterGrade || s.grade === filterGrade) && (!filterShift || s.shift === filterShift));
-
   const categories = Object.entries(AIE_CATEGORIES);
 
-  const toggleCheck = async (studentId, cat, sub) => {
-    const key = `${studentId}__${cat}__${sub}`;
-    const newVal = aieData[key] === 'SI' ? '' : 'SI';
-    setAieData(prev => ({ ...prev, [key]: newVal }));
-    await api('/api/aie', { method: 'PUT', body: { studentId, category: cat, subItem: sub, value: newVal } });
+  const toggleCheck = async (sid, cat, sub) => {
+    const key = `${sid}__${cat}__${sub}`;
+    const nv = aieData[key] === 'SI' ? '' : 'SI';
+    setAieData(prev => ({ ...prev, [key]: nv }));
+    await api('/api/aie', { method: 'PUT', body: { studentId: sid, category: cat, subItem: sub, value: nv } });
   };
-
-  const setLevel = async (studentId, cat, level) => {
-    const key = `${studentId}__${cat}__level`;
-    const newVal = aieData[key] === level ? '' : level;
-    setAieData(prev => ({ ...prev, [key]: newVal }));
-    await api('/api/aie', { method: 'PUT', body: { studentId, category: cat, subItem: 'level', value: newVal } });
+  const setLevel = async (sid, cat, level) => {
+    const key = `${sid}__${cat}__level`;
+    const nv = aieData[key] === level ? '' : level;
+    setAieData(prev => ({ ...prev, [key]: nv }));
+    await api('/api/aie', { method: 'PUT', body: { studentId: sid, category: cat, subItem: 'level', value: nv } });
   };
 
   return (
-    <Card title="Planilla de Seguimiento AIE — Diagnóstico" icon="🖥️" actions={
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+    <Card title="Seguimiento AIE — Diagnóstico" icon="🖥️" actions={
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={filterGrade} onChange={e => setFilterGrade(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-          <option value="">Todos los grados</option>
-          {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+          <option value="">Todos</option>{GRADES.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
         <select value={filterShift} onChange={e => setFilterShift(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-          <option value="">Ambos turnos</option>
-          {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="">Ambos</option>{SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportAIEPDF(filtered, aieData, AIE_CATEGORIES); }} label="PDF" />
       </div>
     }>
-      {filtered.length === 0 ? (
-        <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos. Cargalos en "Alumnos".</p>
-      ) : (
+      {filtered.length === 0 ? <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos.</p> : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
@@ -474,8 +402,8 @@ function AIETab({ students, aieData, setAieData }) {
               <tr style={{ background: P.primaryLight, color: '#fff' }}>
                 {categories.map(([cat, subs]) => (
                   subs[0] === '_level'
-                    ? ['PS', 'S', 'MS'].map(l => <th key={`${cat}-${l}`} style={{ padding: 4, textAlign: 'center', fontSize: 10, borderLeft: '1px solid rgba(255,255,255,.2)' }}>{l}</th>)
-                    : subs.map(s => <th key={`${cat}-${s}`} style={{ padding: 4, textAlign: 'center', fontSize: 10, borderLeft: '1px solid rgba(255,255,255,.2)' }}>{s}</th>)
+                    ? ['PS', 'S', 'MS'].map(l => <th key={`${cat}-${l}`} style={{ padding: 4, textAlign: 'center', fontSize: 10 }}>{l}</th>)
+                    : subs.map(s => <th key={`${cat}-${s}`} style={{ padding: 4, textAlign: 'center', fontSize: 10 }}>{s}</th>)
                 ))}
               </tr>
             </thead>
@@ -487,96 +415,134 @@ function AIETab({ students, aieData, setAieData }) {
                   {categories.map(([cat, subs]) => (
                     subs[0] === '_level'
                       ? ['PS', 'S', 'MS'].map(l => {
-                        const key = `${st.id}__${cat}__level`;
-                        const active = aieData[key] === l;
+                        const active = aieData[`${st.id}__${cat}__level`] === l;
                         const color = l === 'PS' ? P.ps : l === 'S' ? P.s : P.ms;
-                        return (
-                          <td key={`${cat}-${l}-${st.id}`} style={{ padding: 4, textAlign: 'center', borderLeft: `1px solid ${P.border}` }}>
-                            <button onClick={() => setLevel(st.id, cat, l)} style={{
-                              width: 24, height: 24, border: `2px solid ${color}`, borderRadius: 6,
-                              background: active ? color : '#fff', color: active ? '#fff' : color,
-                              fontWeight: 800, fontSize: 10, cursor: 'pointer',
-                            }}>{active ? '✓' : ''}</button>
-                          </td>
-                        );
+                        return <td key={`${cat}-${l}-${st.id}`} style={{ padding: 4, textAlign: 'center' }}>
+                          <button onClick={() => setLevel(st.id, cat, l)} style={{ width: 24, height: 24, border: `2px solid ${color}`, borderRadius: 6, background: active ? color : '#fff', color: active ? '#fff' : color, fontWeight: 800, fontSize: 10, cursor: 'pointer' }}>{active ? '✓' : ''}</button>
+                        </td>;
                       })
                       : subs.map(sub => {
-                        const key = `${st.id}__${cat}__${sub}`;
-                        const checked = aieData[key] === 'SI';
-                        return (
-                          <td key={`${cat}-${sub}-${st.id}`} style={{ padding: 4, textAlign: 'center', borderLeft: `1px solid ${P.border}` }}>
-                            <button onClick={() => toggleCheck(st.id, cat, sub)} style={{
-                              width: 24, height: 24, border: `2px solid ${checked ? P.accent : P.border}`, borderRadius: 6,
-                              background: checked ? P.accent : '#fff', color: '#fff',
-                              fontWeight: 800, fontSize: 10, cursor: 'pointer',
-                            }}>{checked ? '✓' : ''}</button>
-                          </td>
-                        );
+                        const checked = aieData[`${st.id}__${cat}__${sub}`] === 'SI';
+                        return <td key={`${cat}-${sub}-${st.id}`} style={{ padding: 4, textAlign: 'center' }}>
+                          <button onClick={() => toggleCheck(st.id, cat, sub)} style={{ width: 24, height: 24, border: `2px solid ${checked ? P.accent : P.border}`, borderRadius: 6, background: checked ? P.accent : '#fff', color: '#fff', fontWeight: 800, fontSize: 10, cursor: 'pointer' }}>{checked ? '✓' : ''}</button>
+                        </td>;
                       })
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-          <div style={{ marginTop: 12, fontSize: 11, color: P.textLight }}>
-            <strong>Referencias:</strong> PS = Poco Satisfactorio | S = Satisfactorio | MS = Muy Satisfactorio | ✓ = Sí
-          </div>
+          <div style={{ marginTop: 12, fontSize: 11, color: P.textLight }}><strong>Ref:</strong> PS = Poco Satisfactorio | S = Satisfactorio | MS = Muy Satisfactorio</div>
         </div>
       )}
     </Card>
   );
 }
 
-// ━━━━━ RUBRICS TAB ━━━━━
-function RubricsTab() {
-  const [active, setActive] = useState('gcompris');
-  const rubric = active === 'gcompris' ? RUBRIC_GCOMPRIS : RUBRIC_DALE;
-  const title = active === 'gcompris' ? 'G-Compris' : 'Propuesta DALE!';
+// ━━━━━ RUBRICS TAB (CRUD + PDF) ━━━━━
+function RubricsTab({ rubrics, reload }) {
+  const [active, setActive] = useState('G-Compris');
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [form, setForm] = useState({ label: '', description: '', sortOrder: 0 });
+
+  const programs = [...new Set(rubrics.map(r => r.program))];
+  if (!programs.includes('G-Compris')) programs.unshift('G-Compris');
+  if (!programs.includes('Propuesta DALE!')) programs.push('Propuesta DALE!');
+
+  const filtered = rubrics.filter(r => r.program === active);
+
+  const handleSave = async () => {
+    if (!form.label) return;
+    if (editingId) {
+      await api('/api/rubrics', { method: 'PUT', body: { id: editingId, label: form.label, description: form.description, sortOrder: form.sortOrder } });
+    } else {
+      await api('/api/rubrics', { method: 'POST', body: { program: active, label: form.label, description: form.description, sortOrder: form.sortOrder || filtered.length + 1 } });
+    }
+    setForm({ label: '', description: '', sortOrder: 0 });
+    setEditingId(null);
+    setShowForm(false);
+    await reload();
+  };
+
+  const handleDelete = async (id) => { if (confirm('¿Eliminar este criterio?')) { await api(`/api/rubrics?id=${id}`, { method: 'DELETE' }); await reload(); } };
+
+  const startEdit = (r) => { setEditingId(r.id); setForm({ label: r.label, description: r.description, sortOrder: r.sort_order }); setShowForm(true); };
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        <Btn variant={active === 'gcompris' ? 'primary' : 'ghost'} onClick={() => setActive('gcompris')}>🎮 G-Compris</Btn>
-        <Btn variant={active === 'dale' ? 'primary' : 'ghost'} onClick={() => setActive('dale')}>📖 DALE!</Btn>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        {programs.map(p => <Btn key={p} variant={active === p ? 'primary' : 'ghost'} onClick={() => { setActive(p); setShowForm(false); setEditingId(null); }}>{p}</Btn>)}
+        <div style={{ flex: 1 }} />
+        <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportRubricPDF(rubrics, active); }} label="PDF Rúbrica" />
       </div>
-      <Card title={`Rúbrica — ${title}`} icon={active === 'gcompris' ? '🎮' : '📖'}>
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead><tr style={{ background: P.primary, color: '#fff' }}>
-              <th style={{ padding: 10, textAlign: 'left', width: '25%' }}>Criterio</th>
-              <th style={{ padding: 10, textAlign: 'left' }}>Descripción</th>
-              <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.ps }}>PS (1-3)</th>
-              <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.s }}>S (4-6)</th>
-              <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.ms }}>MS (7-10)</th>
-            </tr></thead>
-            <tbody>
-              {rubric.map((r, i) => (
-                <tr key={r.id} style={{ borderBottom: `1px solid ${P.border}`, background: i % 2 ? P.rowAlt : '#fff' }}>
-                  <td style={{ padding: 10, fontWeight: 700 }}>{r.label}</td>
-                  <td style={{ padding: 10, color: P.textLight, fontSize: 12 }}>{r.desc}</td>
-                  <td style={{ padding: 10, textAlign: 'center', fontSize: 11, color: P.ps }}>No logra / Necesita asistencia constante</td>
-                  <td style={{ padding: 10, textAlign: 'center', fontSize: 11, color: P.s }}>Logra con ayuda parcial</td>
-                  <td style={{ padding: 10, textAlign: 'center', fontSize: 11, color: P.ms }}>Logra de forma autónoma</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+
+      {showForm && (
+        <Card title={editingId ? 'Editar criterio' : 'Agregar criterio'} icon="✏️">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
+            <Input label="Nombre del criterio" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Ej: Manejo del mouse" />
+            <Input label="Orden" type="number" value={form.sortOrder} onChange={e => setForm(f => ({ ...f, sortOrder: parseInt(e.target.value) || 0 }))} />
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, marginBottom: 4, color: P.textLight }}>Descripción</label>
+            <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={3}
+              style={{ width: '100%', padding: '8px 12px', border: `1px solid ${P.border}`, borderRadius: 8, fontSize: 14, boxSizing: 'border-box', resize: 'vertical' }} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn onClick={handleSave}>💾 Guardar</Btn>
+            <Btn variant="ghost" onClick={() => { setShowForm(false); setEditingId(null); setForm({ label: '', description: '', sortOrder: 0 }); }}>Cancelar</Btn>
+          </div>
+        </Card>
+      )}
+
+      <Card title={`Rúbrica — ${active} (${filtered.length} criterios)`} icon="📋" actions={
+        !showForm && <Btn variant="accent" small onClick={() => { setShowForm(true); setEditingId(null); setForm({ label: '', description: '', sortOrder: filtered.length + 1 }); }}>➕ Agregar criterio</Btn>
+      }>
+        {filtered.length === 0 ? <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay criterios definidos para este programa.</p> : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead><tr style={{ background: P.primary, color: '#fff' }}>
+                <th style={{ padding: 10, textAlign: 'center', width: 40 }}>#</th>
+                <th style={{ padding: 10, textAlign: 'left' }}>Criterio</th>
+                <th style={{ padding: 10, textAlign: 'left' }}>Descripción</th>
+                <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.ps }}>PS (1-3)</th>
+                <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.s }}>S (4-6)</th>
+                <th style={{ padding: 10, textAlign: 'center', width: 100, background: P.ms }}>MS (7-10)</th>
+                <th style={{ padding: 10, textAlign: 'center', width: 80 }}>Acciones</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map((r, i) => (
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${P.border}`, background: i % 2 ? P.rowAlt : '#fff' }}>
+                    <td style={{ padding: 10, textAlign: 'center', color: P.textLight }}>{r.sort_order || i + 1}</td>
+                    <td style={{ padding: 10, fontWeight: 700 }}>{r.label}</td>
+                    <td style={{ padding: 10, color: P.textLight, fontSize: 12 }}>{r.description}</td>
+                    <td style={{ padding: 10, textAlign: 'center', fontSize: 10, color: P.ps }}>No logra</td>
+                    <td style={{ padding: 10, textAlign: 'center', fontSize: 10, color: P.s }}>Con ayuda</td>
+                    <td style={{ padding: 10, textAlign: 'center', fontSize: 10, color: P.ms }}>Autónomo</td>
+                    <td style={{ padding: 10, textAlign: 'center' }}>
+                      <button onClick={() => startEdit(r)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, marginRight: 4 }}>✏️</button>
+                      <button onClick={() => handleDelete(r.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16 }}>🗑️</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
     </>
   );
 }
 
 // ━━━━━ EVALUATIONS TAB ━━━━━
-function EvalsTab({ students, evals, reload }) {
+function EvalsTab({ students, evals, rubrics, reload }) {
   const [form, setForm] = useState({ studentId: '', program: '', date: todayStr(), scores: {} });
   const [viewStudent, setViewStudent] = useState('');
   const [viewProgram, setViewProgram] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const rubric = form.program === 'G-Compris' ? RUBRIC_GCOMPRIS : form.program === 'Propuesta DALE!' ? RUBRIC_DALE : [];
-
-  const setScore = (id, val) => setForm(f => ({ ...f, scores: { ...f.scores, [id]: parseInt(val) || 0 } }));
+  const programs = [...new Set(rubrics.map(r => r.program))];
+  const programRubrics = rubrics.filter(r => r.program === form.program);
 
   const submitEval = async () => {
     if (!form.studentId || !form.program) return;
@@ -587,12 +553,7 @@ function EvalsTab({ students, evals, reload }) {
     setSaving(false);
   };
 
-  const deleteEval = async (id) => {
-    if (!confirm('¿Eliminar esta evaluación?')) return;
-    await api(`/api/evaluations?id=${id}`, { method: 'DELETE' });
-    await reload();
-  };
-
+  const deleteEval = async (id) => { if (confirm('¿Eliminar?')) { await api(`/api/evaluations?id=${id}`, { method: 'DELETE' }); await reload(); } };
   const filteredEvals = evals.filter(e => (!viewStudent || String(e.student_id) === viewStudent) && (!viewProgram || e.program === viewProgram));
 
   return (
@@ -602,17 +563,17 @@ function EvalsTab({ students, evals, reload }) {
           <Select label="Alumno" value={form.studentId} onChange={e => setForm(f => ({ ...f, studentId: e.target.value }))}
             options={students.map(s => ({ value: String(s.id), label: `${s.last_name}, ${s.first_name} (${s.grade})` }))} />
           <Select label="Programa" value={form.program} onChange={e => setForm(f => ({ ...f, program: e.target.value, scores: {} }))}
-            options={['G-Compris', 'Propuesta DALE!']} />
+            options={programs} />
           <Input label="Fecha" type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
         </div>
-        {rubric.length > 0 && (
+        {programRubrics.length > 0 && (
           <div style={{ marginTop: 16 }}>
             <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: P.primary }}>Puntaje por criterio (1 a 10):</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 8 }}>
-              {rubric.map(r => (
+              {programRubrics.map(r => (
                 <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', background: P.bg, borderRadius: 8 }}>
                   <span style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>{r.label}</span>
-                  <input type="number" min={0} max={10} value={form.scores[r.id] || ''} onChange={e => setScore(r.id, e.target.value)}
+                  <input type="number" min={0} max={10} value={form.scores[r.criterion_key] || ''} onChange={e => setForm(f => ({ ...f, scores: { ...f.scores, [r.criterion_key]: parseInt(e.target.value) || 0 } }))}
                     style={{ width: 50, textAlign: 'center', padding: '4px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 13, fontWeight: 700 }} />
                 </div>
               ))}
@@ -623,30 +584,21 @@ function EvalsTab({ students, evals, reload }) {
       </Card>
 
       <Card title={`Evaluaciones (${filteredEvals.length})`} icon="📋" actions={
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <select value={viewStudent} onChange={e => setViewStudent(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-            <option value="">Todos</option>
-            {students.map(s => <option key={s.id} value={String(s.id)}>{s.last_name}, {s.first_name}</option>)}
+            <option value="">Todos</option>{students.map(s => <option key={s.id} value={String(s.id)}>{s.last_name}, {s.first_name}</option>)}
           </select>
           <select value={viewProgram} onChange={e => setViewProgram(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-            <option value="">Todos</option>
-            {['G-Compris', 'Propuesta DALE!'].map(p => <option key={p} value={p}>{p}</option>)}
+            <option value="">Todos</option>{programs.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
+          <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportEvalsPDF(filteredEvals, rubrics); }} label="PDF General" />
         </div>
       }>
-        {filteredEvals.length === 0 ? (
-          <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay evaluaciones.</p>
-        ) : (
+        {filteredEvals.length === 0 ? <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay evaluaciones.</p> : (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead><tr style={{ background: P.bg }}>
-                <th style={{ padding: 8, textAlign: 'left' }}>Fecha</th>
-                <th style={{ padding: 8, textAlign: 'left' }}>Alumno</th>
-                <th style={{ padding: 8, textAlign: 'left' }}>Grado</th>
-                <th style={{ padding: 8, textAlign: 'left' }}>Programa</th>
-                <th style={{ padding: 8, textAlign: 'center' }}>Prom.</th>
-                <th style={{ padding: 8, textAlign: 'center' }}>Nivel</th>
-                <th style={{ padding: 8, textAlign: 'center' }}>🗑️</th>
+                {['Fecha','Alumno','Grado','Programa','Prom.','Nivel',''].map(h => <th key={h} style={{ padding: 8, textAlign: h === '' ? 'center' : 'left' }}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {filteredEvals.map((ev, i) => {
@@ -660,11 +612,10 @@ function EvalsTab({ students, evals, reload }) {
                       <td style={{ padding: 8, fontWeight: 600 }}>{ev.last_name}, {ev.first_name}</td>
                       <td style={{ padding: 8 }}>{ev.grade}</td>
                       <td style={{ padding: 8 }}>{ev.program}</td>
-                      <td style={{ padding: 8, textAlign: 'center', fontWeight: 700, color: levelColor }}>{avg.toFixed(1)}</td>
-                      <td style={{ padding: 8, textAlign: 'center' }}>
-                        <span style={{ background: levelColor, color: '#fff', padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{level}</span>
-                      </td>
-                      <td style={{ padding: 8, textAlign: 'center' }}>
+                      <td style={{ padding: 8, fontWeight: 700, color: levelColor }}>{avg.toFixed(1)}</td>
+                      <td style={{ padding: 8 }}><span style={{ background: levelColor, color: '#fff', padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 700 }}>{level}</span></td>
+                      <td style={{ padding: 8, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                        <button onClick={async () => { const pdf = await getPDF(); pdf.exportEvalDetailPDF(ev, rubrics); }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, marginRight: 4 }} title="PDF individual">📄</button>
                         <button onClick={() => deleteEval(ev.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 14 }}>🗑️</button>
                       </td>
                     </tr>
@@ -684,34 +635,30 @@ function AttendanceTab({ students, attendanceMap, setAttendanceMap }) {
   const [selDate, setSelDate] = useState(todayStr());
   const [filterGrade, setFilterGrade] = useState('');
   const [filterShift, setFilterShift] = useState('');
-  const [loaded, setLoaded] = useState(false);
 
-  const loadAttendance = useCallback(async () => {
+  const loadAtt = useCallback(async () => {
     const data = await api(`/api/attendance?date=${selDate}`);
     if (data) setAttendanceMap(data.map || {});
-    setLoaded(true);
   }, [selDate, setAttendanceMap]);
 
-  useEffect(() => { loadAttendance(); }, [loadAttendance]);
+  useEffect(() => { loadAtt(); }, [loadAtt]);
 
   const filtered = students.filter(s => (!filterGrade || s.grade === filterGrade) && (!filterShift || s.shift === filterShift));
 
-  const toggleAttendance = async (studentId) => {
-    const key = `${selDate}__${studentId}`;
+  const toggleAttendance = async (sid) => {
+    const key = `${selDate}__${sid}`;
     const cur = attendanceMap[key] || 'absent';
     const next = cur === 'absent' ? 'present' : cur === 'present' ? 'late' : 'absent';
     setAttendanceMap(prev => ({ ...prev, [key]: next }));
-    await api('/api/attendance', { method: 'PUT', body: { studentId, date: selDate, status: next } });
+    await api('/api/attendance', { method: 'PUT', body: { studentId: sid, date: selDate, status: next } });
   };
 
   const getStatus = (id) => attendanceMap[`${selDate}__${id}`] || 'absent';
-
   const cfg = {
     present: { label: 'Presente', bg: '#eafaf1', color: P.accent, icon: '✅' },
     late: { label: 'Tarde', bg: '#fef9e7', color: P.accentWarm, icon: '⏰' },
     absent: { label: 'Ausente', bg: '#fdedec', color: P.danger, icon: '❌' },
   };
-
   const stats = { present: filtered.filter(s => getStatus(s.id) === 'present').length, late: filtered.filter(s => getStatus(s.id) === 'late').length, absent: filtered.filter(s => getStatus(s.id) === 'absent').length };
 
   return (
@@ -719,13 +666,12 @@ function AttendanceTab({ students, attendanceMap, setAttendanceMap }) {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
         <input type="date" value={selDate} onChange={e => setSelDate(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }} />
         <select value={filterGrade} onChange={e => setFilterGrade(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-          <option value="">Todos</option>
-          {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+          <option value="">Todos</option>{GRADES.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
         <select value={filterShift} onChange={e => setFilterShift(e.target.value)} style={{ padding: '4px 8px', border: `1px solid ${P.border}`, borderRadius: 6, fontSize: 12 }}>
-          <option value="">Ambos</option>
-          {SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
+          <option value="">Ambos</option>{SHIFTS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportAttendancePDF(filtered, attendanceMap, selDate); }} label="PDF" />
       </div>
     }>
       <div style={{ display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -737,9 +683,7 @@ function AttendanceTab({ students, attendanceMap, setAttendanceMap }) {
           </div>
         ))}
       </div>
-      {filtered.length === 0 ? (
-        <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos.</p>
-      ) : (
+      {filtered.length === 0 ? <p style={{ textAlign: 'center', color: P.textLight, padding: 20 }}>No hay alumnos.</p> : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 8 }}>
           {filtered.map(s => {
             const status = getStatus(s.id);
@@ -760,7 +704,7 @@ function AttendanceTab({ students, attendanceMap, setAttendanceMap }) {
           })}
         </div>
       )}
-      <p style={{ fontSize: 11, color: P.textLight, marginTop: 12 }}>Click en cada alumno para alternar: Ausente → Presente → Tarde → Ausente</p>
+      <p style={{ fontSize: 11, color: P.textLight, marginTop: 12 }}>Click para alternar: Ausente → Presente → Tarde → Ausente</p>
     </Card>
   );
 }
