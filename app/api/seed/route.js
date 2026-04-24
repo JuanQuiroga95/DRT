@@ -94,17 +94,15 @@ export async function POST(request) {
       )
     `;
 
-    // Create default admin user if not exists
-    const existingAdmin = await sql`SELECT id FROM users WHERE username = 'admin'`;
-    if (existingAdmin.length === 0) {
-      const hash = await bcrypt.hash('rawson2026', 10);
-      await sql`
-        INSERT INTO users (username, password_hash, full_name, role)
-        VALUES ('admin', ${hash}, 'Administrador', 'admin')
-      `;
-    }
+    // Create or update default admin user
+    const adminHash = await bcrypt.hash('rawson2026', 10);
+    await sql`
+      INSERT INTO users (username, password_hash, full_name, role)
+      VALUES ('admin', ${adminHash}, 'Administrador', 'admin')
+      ON CONFLICT (username) DO UPDATE SET password_hash = ${adminHash}
+    `;
 
-    // Create default staff users
+    // Create or update default staff users
     const staff = [
       { username: 'pamela', name: 'Pamela Pastrán', role: 'docente', shift: 'Mañana', position: 'DRT' },
       { username: 'julieta', name: 'Julieta Pezantes', role: 'docente', shift: 'Tarde', position: 'DRT' },
@@ -114,14 +112,12 @@ export async function POST(request) {
     ];
 
     for (const s of staff) {
-      const exists = await sql`SELECT id FROM users WHERE username = ${s.username}`;
-      if (exists.length === 0) {
-        const hash = await bcrypt.hash('rawson2026', 10);
-        await sql`
-          INSERT INTO users (username, password_hash, full_name, role, shift, position)
-          VALUES (${s.username}, ${hash}, ${s.name}, ${s.role}, ${s.shift}, ${s.position})
-        `;
-      }
+      const hash = await bcrypt.hash('rawson2026', 10);
+      await sql`
+        INSERT INTO users (username, password_hash, full_name, role, shift, position)
+        VALUES (${s.username}, ${hash}, ${s.name}, ${s.role}, ${s.shift}, ${s.position})
+        ON CONFLICT (username) DO UPDATE SET password_hash = ${hash}
+      `;
     }
 
     // Seed default schedule

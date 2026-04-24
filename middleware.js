@@ -1,23 +1,11 @@
 import { NextResponse } from 'next/server';
 import { jwtVerify } from 'jose';
 
-const SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-change-me');
-const PUBLIC_PATHS = ['/', '/api/auth/login', '/api/seed'];
+const SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'dev-secret-change-me-1234567890');
 
 export async function middleware(request) {
   const { pathname } = request.nextUrl;
 
-  // Allow public paths
-  if (PUBLIC_PATHS.some(p => pathname === p)) {
-    return NextResponse.next();
-  }
-
-  // Allow static files
-  if (pathname.startsWith('/_next') || pathname.startsWith('/favicon')) {
-    return NextResponse.next();
-  }
-
-  // Check JWT
   const token = request.cookies.get('drt-session')?.value;
   if (!token) {
     if (pathname.startsWith('/api/')) {
@@ -27,13 +15,18 @@ export async function middleware(request) {
   }
 
   try {
-    await jwtVerify(token, SECRET);
+    const result = await jwtVerify(token, SECRET);
+    if (!result || !result.payload) {
+      throw new Error('Token inválido');
+    }
     return NextResponse.next();
-  } catch {
+  } catch (err) {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Sesión expirada' }, { status: 401 });
     }
-    return NextResponse.redirect(new URL('/', request.url));
+    const response = NextResponse.redirect(new URL('/', request.url));
+    response.cookies.delete('drt-session');
+    return response;
   }
 }
 
