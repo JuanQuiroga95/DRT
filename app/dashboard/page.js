@@ -445,10 +445,12 @@ function RubricsTab({ rubrics, reload }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({ label: '', description: '', sortOrder: 0 });
+  const [showNewProgram, setShowNewProgram] = useState(false);
+  const [newProgramName, setNewProgramName] = useState('');
 
   const programs = [...new Set(rubrics.map(r => r.program))];
   if (!programs.includes('G-Compris')) programs.unshift('G-Compris');
-  if (!programs.includes('Propuesta DALE!')) programs.push('Propuesta DALE!');
+  if (!programs.includes('Propuesta DALE!') && !programs.some(p => p === 'Propuesta DALE!')) programs.push('Propuesta DALE!');
 
   const filtered = rubrics.filter(r => r.program === active);
 
@@ -465,6 +467,18 @@ function RubricsTab({ rubrics, reload }) {
     await reload();
   };
 
+  const handleAddProgram = async () => {
+    const name = newProgramName.trim();
+    if (!name) return;
+    if (programs.includes(name)) { alert('Ese programa ya existe'); return; }
+    // Create the program by adding a placeholder rubric
+    await api('/api/rubrics', { method: 'POST', body: { program: name, label: 'Primer criterio', description: 'Editá este criterio o agregá más', sortOrder: 1 } });
+    setNewProgramName('');
+    setShowNewProgram(false);
+    await reload();
+    setActive(name);
+  };
+
   const handleDelete = async (id) => { if (confirm('¿Eliminar este criterio?')) { await api(`/api/rubrics?id=${id}`, { method: 'DELETE' }); await reload(); } };
 
   const startEdit = (r) => { setEditingId(r.id); setForm({ label: r.label, description: r.description, sortOrder: r.sort_order }); setShowForm(true); };
@@ -473,9 +487,24 @@ function RubricsTab({ rubrics, reload }) {
     <>
       <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
         {programs.map(p => <Btn key={p} variant={active === p ? 'primary' : 'ghost'} onClick={() => { setActive(p); setShowForm(false); setEditingId(null); }}>{p}</Btn>)}
+        <Btn variant="warn" small onClick={() => setShowNewProgram(!showNewProgram)}>➕ Nuevo programa</Btn>
         <div style={{ flex: 1 }} />
         <PdfBtn onClick={async () => { const pdf = await getPDF(); pdf.exportRubricPDF(rubrics, active); }} label="PDF Rúbrica" />
       </div>
+
+      {showNewProgram && (
+        <Card title="Agregar nuevo programa" icon="📦">
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <Input label="Nombre del programa" value={newProgramName} onChange={e => setNewProgramName(e.target.value)} placeholder="Ej: Wordwall, Sebran, etc." />
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              <Btn onClick={handleAddProgram}>✅ Crear programa</Btn>
+              <Btn variant="ghost" onClick={() => { setShowNewProgram(false); setNewProgramName(''); }}>Cancelar</Btn>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {showForm && (
         <Card title={editingId ? 'Editar criterio' : 'Agregar criterio'} icon="✏️">
